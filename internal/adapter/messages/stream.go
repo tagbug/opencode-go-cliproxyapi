@@ -277,9 +277,14 @@ func (sc *StreamConverter) dispatchResponses(etype string, ev *sseEvent, events 
 			sc.toolsSeen = true
 			bs.outIdx = sc.outCount
 			sc.outCount++
-			*events = append(*events, sc.responsesEm().ItemAdded(bs.outIdx, map[string]any{
-				"type": "function_call", "call_id": bs.id, "name": bs.name, "arguments": "",
-			}))
+			localName, namespace := shared.SplitQualifiedToolName(bs.name)
+			item := map[string]any{
+				"type": "function_call", "call_id": bs.id, "name": localName, "arguments": "",
+			}
+			if namespace != "" {
+				item["namespace"] = namespace
+			}
+			*events = append(*events, sc.responsesEm().ItemAdded(bs.outIdx, item))
 		}
 	case "content_block_delta":
 		idx := int(ev.Index)

@@ -869,12 +869,13 @@ type ResponsesResult struct {
 	Usage  ResponsesUsage `json:"usage"`
 }
 
-// RespTool is one Responses function tool.
+// RespTool is one Responses function or namespace tool.
 type RespTool struct {
-	Type        string          `json:"type"` // always "function"
+	Type        string          `json:"type"` // "function", "namespace", etc.
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	Parameters  json.RawMessage `json:"parameters,omitempty"`
+	Tools       []RespTool      `json:"tools,omitempty"`
 }
 
 // ResponsesRequest decodes an inbound OpenAI Responses request body
@@ -951,6 +952,7 @@ type RespItem struct {
 	Content   json.RawMessage `json:"content,omitempty"`
 	CallID    string          `json:"call_id,omitempty"`
 	Name      string          `json:"name,omitempty"`
+	Namespace string          `json:"namespace,omitempty"`
 	Arguments string          `json:"arguments,omitempty"`
 	Output    string          `json:"output,omitempty"`
 	Summary   []struct {
@@ -1438,10 +1440,17 @@ func (a *OutputAssembler) AddText(fragment string) {
 
 // AppendFunctionCall adds one function_call item in arrival order;
 // arguments pass through verbatim — callers apply the absent-arguments
-// policy themselves.
+// policy themselves. If name contains a namespace (e.g. "mcp__exa__web_search_exa"),
+// it is automatically split into local name and namespace.
 func (a *OutputAssembler) AppendFunctionCall(callID, name, args string) {
+	localName, namespace := SplitQualifiedToolName(name)
+	a.AppendFunctionCallWithNamespace(callID, localName, namespace, args)
+}
+
+// AppendFunctionCallWithNamespace adds one function_call item with explicit namespace.
+func (a *OutputAssembler) AppendFunctionCallWithNamespace(callID, name, namespace, args string) {
 	a.items = append(a.items, RespItem{
-		Type: "function_call", CallID: callID, Name: name, Arguments: args,
+		Type: "function_call", CallID: callID, Name: name, Namespace: namespace, Arguments: args,
 	})
 }
 
@@ -1479,3 +1488,80 @@ func FunctionTool(toolType, targetLabel string) *errclass.Error {
 	}
 	return nil
 }
+
+// QualifyToolName prefixes localName with namespace if non-empty.
+func QualifyToolName(namespace, localName string) string {
+	namespace = strings.TrimSpace(namespace)
+	localName = strings.TrimSpace(localName)
+	if namespace == "" {
+		return localName
+	}
+	if strings.HasSuffix(namespace, "__") {
+		return namespace + localName
+	}
+	return namespace + "__" + localName
+}
+
+// SplitQualifiedToolName decomposes a possibly namespace-qualified tool name
+// into its localName and namespace.
+func SplitQualifiedToolName(qualifiedName string) (localName, namespace string) {
+	qualifiedName = strings.TrimSpace(qualifiedName)
+	if qualifiedName == "" {
+		return "", ""
+	}
+	if strings.HasPrefix(qualifiedName, "mcp__") {
+		after := qualifiedName[5:] // strip "mcp__"
+		if idx := strings.Index(after, "__"); idx >= 0 {
+			return after[idx+2:], "mcp__" + after[:idx]
+		}
+	}
+	if idx := strings.Index(qualifiedName, "__"); idx >= 0 {
+		return qualifiedName[idx+2:], qualifiedName[:idx]
+	}
+	return qualifiedName, ""
+}
+
+// FlatTool is one flattened function tool with optional namespace identity.
+type FlatTool struct {
+	Name        string
+	Namespace   string
+	Description string
+	Parameters  json.RawMessage
+}
+
+// QualifiedName returns the qualified name of the tool (e.g. "mcp__exa__web_search_exa").
+func (f FlatTool) QualifiedName() string {
+	return QualifyToolName(f.Namespace, f.Name)
+}
+
+// FlattenResponsesTools flattens a slice of RespTool, unwrapping any "namespace" containers.
+func FlattenResponsesTools(tools []RespTool, targetLabel string) ([]FlatTool, *errclass.Error) {
+	var result []FlatTool
+	for _, t := range tools {
+		switch t.Type {
+		case "", "function":
+			result = append(result, FlatTool{
+				Name:        t.Name,
+				Namespace:   "",
+				Description: t.Description,
+				Parameters:  t.Parameters,
+			})
+		case "namespace":
+			for _, child := range t.Tools {
+				if child.Type != "" && child.Type != "function" {
+					return nil, FunctionTool(child.Type, targetLabel)
+				}
+				result = append(result, FlatTool{
+					Name:        child.Name,
+					Namespace:   t.Name,
+					Description: child.Description,
+					Parameters:  child.Parameters,
+				})
+			}
+		default:
+			return nil, FunctionTool(t.Type, targetLabel)
+		}
+	}
+	return result, nil
+}
+

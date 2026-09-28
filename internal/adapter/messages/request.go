@@ -374,8 +374,12 @@ func fromResponses(upstreamModel string, body []byte, ts *pluginapi.ThinkingSupp
 			if eErr != nil {
 				return nil, eErr
 			}
+			name := item.Name
+			if item.Namespace != "" {
+				name = shared.QualifyToolName(item.Namespace, item.Name)
+			}
 			b.add("assistant", "assistant", anthropicBlock{
-				"type": "tool_use", "id": item.CallID, "name": item.Name, "input": input,
+				"type": "tool_use", "id": item.CallID, "name": name, "input": input,
 			})
 		case "function_call_output":
 			b.add("user:tool", "user", anthropicBlock{
@@ -404,13 +408,14 @@ func fromResponses(upstreamModel string, body []byte, ts *pluginapi.ThinkingSupp
 	b.flush()
 	req.Messages = b.msgs
 
-	for _, t := range src.Tools {
-		if eErr := shared.FunctionTool(t.Type, EndpointPath); eErr != nil {
-			return nil, eErr
-		}
+	flatTools, eErr := shared.FlattenResponsesTools(src.Tools, EndpointPath)
+	if eErr != nil {
+		return nil, eErr
+	}
+	for _, t := range flatTools {
 		schema := shared.ObjectSchema(t.Parameters)
 		req.Tools = append(req.Tools, anthropicTool{
-			Name: t.Name, Description: t.Description, InputSchema: schema,
+			Name: t.QualifiedName(), Description: t.Description, InputSchema: schema,
 		})
 	}
 	effort := ""

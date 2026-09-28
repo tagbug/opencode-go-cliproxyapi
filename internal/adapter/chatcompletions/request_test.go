@@ -861,3 +861,47 @@ func TestBuildOpenAIRequestDeveloperRole(t *testing.T) {
 	}
 }
 
+func TestResponsesToChatNamespaceTools(t *testing.T) {
+	body := `{
+		"model": "pub/glm",
+		"input": [
+			{"type": "function_call", "call_id": "c1", "name": "search", "namespace": "mcp__exa", "arguments": "{}"}
+		],
+		"tools": [
+			{
+				"type": "namespace",
+				"name": "mcp__exa",
+				"tools": [
+					{"type": "function", "name": "search", "description": "search web"}
+				]
+			},
+			{"type": "function", "name": "local_exec", "description": "exec local"}
+		]
+	}`
+	m := mustBuild(t, "openai-response", body, nil)
+	tools := m["tools"].([]any)
+	if len(tools) != 2 {
+		t.Fatalf("expected 2 tools, got %d", len(tools))
+	}
+	t1 := tools[0].(map[string]any)["function"].(map[string]any)
+	t2 := tools[1].(map[string]any)["function"].(map[string]any)
+	if t1["name"] != "mcp__exa__search" || t2["name"] != "local_exec" {
+		t.Fatalf("unexpected tools: %v, %v", t1, t2)
+	}
+
+	msgs := m["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	msg := msgs[0].(map[string]any)
+	toolCalls := msg["tool_calls"].([]any)
+	if len(toolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(toolCalls))
+	}
+	tc := toolCalls[0].(map[string]any)["function"].(map[string]any)
+	if tc["name"] != "mcp__exa__search" {
+		t.Fatalf("expected tool call mcp__exa__search, got %v", tc["name"])
+	}
+}
+
+

@@ -51,6 +51,7 @@ type streamTool struct {
 	blockIndex int
 	id         string
 	name       string
+	namespace  string
 	args       strings.Builder
 	stopped    bool // content_block_stop emitted
 }
@@ -458,7 +459,13 @@ func (sc *StreamConverter) responsesLine(line string) ([][]byte, *errclass.Error
 	for _, tc := range choice.Delta.ToolCalls {
 		t := sc.tools[tc.Index]
 		if t == nil {
-			t = &streamTool{blockIndex: sc.nextIndex, id: tc.ID, name: tc.Function.Name}
+			localName, namespace := shared.SplitQualifiedToolName(tc.Function.Name)
+			t = &streamTool{
+				blockIndex: sc.nextIndex,
+				id:         tc.ID,
+				name:       localName,
+				namespace:  namespace,
+			}
 			sc.nextIndex++
 			sc.tools[tc.Index] = t
 			sc.toolsSeen = true
@@ -466,10 +473,14 @@ func (sc *StreamConverter) responsesLine(line string) ([][]byte, *errclass.Error
 			// Announce the item before any arguments delta references it
 			// (F18 lifecycle parity); call_id-only matches the canonical
 			// native function_call shape (no "id" key).
-			events = append(events, sc.responsesEm().ItemAdded(t.blockIndex, map[string]any{
+			item := map[string]any{
 				"type": "function_call", "call_id": t.id,
 				"name": t.name, "arguments": "",
-			}))
+			}
+			if t.namespace != "" {
+				item["namespace"] = t.namespace
+			}
+			events = append(events, sc.responsesEm().ItemAdded(t.blockIndex, item))
 		}
 		if tc.Function.Arguments != "" {
 			t.args.WriteString(tc.Function.Arguments)
@@ -517,7 +528,7 @@ func (sc *StreamConverter) responsesTerminal() [][]byte {
 			oa.ReserveTextSlot()
 			reserved = true
 		}
-		oa.AppendFunctionCall(t.id, t.name, shared.DefaultArgs(t.args.String()))
+		oa.AppendFunctionCallWithNamespace(t.id, t.name, t.namespace, shared.DefaultArgs(t.args.String()))
 	}
 	if sc.msgIndex >= 0 && !reserved {
 		oa.ReserveTextSlot()

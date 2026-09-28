@@ -898,3 +898,51 @@ func TestParallelFalseNoneStillUnsupported(t *testing.T) { // row 7
 		t.Fatalf("err = %v", eErr)
 	}
 }
+
+func TestFromResponsesNamespaceTools(t *testing.T) {
+	body := `{
+		"model": "pub/glm",
+		"input": [
+			{"type": "function_call", "call_id": "c1", "name": "search", "namespace": "mcp__exa", "arguments": "{}"}
+		],
+		"tools": [
+			{
+				"type": "namespace",
+				"name": "mcp__exa",
+				"tools": [
+					{"type": "function", "name": "search", "description": "search web"}
+				]
+			},
+			{"type": "function", "name": "local_exec", "description": "exec local"}
+		]
+	}`
+	out, eErr := BuildRequest("minimax", "openai-response", []byte(body), nil)
+	if eErr != nil {
+		t.Fatalf("unexpected error: %v", eErr)
+	}
+	m := decodeReq(t, out)
+	tools, ok := m["tools"].([]any)
+	if !ok || len(tools) != 2 {
+		t.Fatalf("tools = %v", m["tools"])
+	}
+	t1 := tools[0].(map[string]any)
+	t2 := tools[1].(map[string]any)
+	if t1["name"] != "mcp__exa__search" || t2["name"] != "local_exec" {
+		t.Fatalf("tools mismatch: %v, %v", t1, t2)
+	}
+
+	msgs, ok := m["messages"].([]any)
+	if !ok || len(msgs) != 1 {
+		t.Fatalf("messages = %v", m["messages"])
+	}
+	msg := msgs[0].(map[string]any)
+	content := msg["content"].([]any)
+	if len(content) != 1 {
+		t.Fatalf("content = %v", content)
+	}
+	block := content[0].(map[string]any)
+	if block["name"] != "mcp__exa__search" {
+		t.Fatalf("tool_use block name mismatch: %v", block)
+	}
+}
+

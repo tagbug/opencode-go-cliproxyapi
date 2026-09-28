@@ -215,12 +215,17 @@ func fromChatCompletions(upstreamModel string, body []byte, ts *pluginapi.Thinki
 				req.Input = append(req.Input, msgItem(m.Role, parts))
 			}
 			for _, tc := range m.ToolCalls {
-				req.Input = append(req.Input, map[string]any{
+				name, namespace := shared.SplitQualifiedToolName(tc.Function.Name)
+				item := map[string]any{
 					"type":      "function_call",
 					"call_id":   tc.ID,
-					"name":      tc.Function.Name,
+					"name":      name,
 					"arguments": shared.DefaultArgs(tc.Function.Arguments),
-				})
+				}
+				if namespace != "" {
+					item["namespace"] = namespace
+				}
+				req.Input = append(req.Input, item)
 			}
 		case "tool":
 			parts, eErr := contentParts(m.Content, m.Role)
@@ -248,12 +253,41 @@ func fromChatCompletions(upstreamModel string, body []byte, ts *pluginapi.Thinki
 		if eErr := shared.FunctionTool(t.Type, EndpointPath); eErr != nil {
 			return nil, eErr
 		}
-		req.Tools = append(req.Tools, shared.RespTool{
-			Type:        "function",
-			Name:        t.Function.Name,
-			Description: t.Function.Description,
-			Parameters:  shared.ObjectSchema(t.Function.Parameters),
-		})
+		name, namespace := shared.SplitQualifiedToolName(t.Function.Name)
+		if namespace != "" {
+			found := false
+			for i := range req.Tools {
+				if req.Tools[i].Type == "namespace" && req.Tools[i].Name == namespace {
+					req.Tools[i].Tools = append(req.Tools[i].Tools, shared.RespTool{
+						Type:        "function",
+						Name:        name,
+						Description: t.Function.Description,
+						Parameters:  shared.ObjectSchema(t.Function.Parameters),
+					})
+					found = true
+					break
+				}
+			}
+			if !found {
+				req.Tools = append(req.Tools, shared.RespTool{
+					Type: "namespace",
+					Name: namespace,
+					Tools: []shared.RespTool{{
+						Type:        "function",
+						Name:        name,
+						Description: t.Function.Description,
+						Parameters:  shared.ObjectSchema(t.Function.Parameters),
+					}},
+				})
+			}
+		} else {
+			req.Tools = append(req.Tools, shared.RespTool{
+				Type:        "function",
+				Name:        t.Function.Name,
+				Description: t.Function.Description,
+				Parameters:  shared.ObjectSchema(t.Function.Parameters),
+			})
+		}
 	}
 	b, _ := json.Marshal(req) // only marshallable composed types; cannot fail
 	return b, nil

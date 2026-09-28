@@ -1482,3 +1482,55 @@ func TestDecodeClaudeMessages(t *testing.T) {
 		}
 	}
 }
+
+func TestNamespaceTools(t *testing.T) {
+	if got := QualifyToolName("mcp__exa", "web_search_exa"); got != "mcp__exa__web_search_exa" {
+		t.Fatalf("QualifyToolName = %q, want mcp__exa__web_search_exa", got)
+	}
+	if got := QualifyToolName("", "exec"); got != "exec" {
+		t.Fatalf("QualifyToolName empty namespace = %q, want exec", got)
+	}
+
+	name, ns := SplitQualifiedToolName("mcp__exa__web_search_exa")
+	if name != "web_search_exa" || ns != "mcp__exa" {
+		t.Fatalf("SplitQualifiedToolName mcp = name:%q ns:%q", name, ns)
+	}
+	name, ns = SplitQualifiedToolName("exec")
+	if name != "exec" || ns != "" {
+		t.Fatalf("SplitQualifiedToolName plain = name:%q ns:%q", name, ns)
+	}
+
+	tools := []RespTool{
+		{Type: "function", Name: "exec"},
+		{
+			Type: "namespace",
+			Name: "mcp__exa",
+			Tools: []RespTool{
+				{Type: "function", Name: "search"},
+				{Type: "function", Name: "fetch"},
+			},
+		},
+	}
+	flat, err := FlattenResponsesTools(tools, "/v1/chat/completions")
+	if err != nil {
+		t.Fatalf("FlattenResponsesTools error: %v", err)
+	}
+	if len(flat) != 3 {
+		t.Fatalf("got %d tools, want 3", len(flat))
+	}
+	if flat[0].QualifiedName() != "exec" || flat[1].QualifiedName() != "mcp__exa__search" || flat[2].QualifiedName() != "mcp__exa__fetch" {
+		t.Fatalf("unexpected flattened tools: %+v", flat)
+	}
+
+	oa := NewOutputAssembler("resp-1")
+	oa.AppendFunctionCall("call-1", "mcp__exa__search", "{}")
+	rendered := oa.Render()
+	if len(rendered) != 1 {
+		t.Fatalf("rendered len = %d", len(rendered))
+	}
+	item, ok := rendered[0].(RespItem)
+	if !ok || item.Name != "search" || item.Namespace != "mcp__exa" {
+		t.Fatalf("unexpected rendered item: %+v", rendered[0])
+	}
+}
+

@@ -401,7 +401,11 @@ func responsesToChat(upstreamModel string, body []byte, ts *pluginapi.ThinkingSu
 			}
 		case "function_call":
 			tc := shared.CCToolCall{ID: item.CallID, Type: "function"}
-			tc.Function.Name = item.Name
+			name := item.Name
+			if item.Namespace != "" {
+				name = shared.QualifyToolName(item.Namespace, item.Name)
+			}
+			tc.Function.Name = name
 			tc.Function.Arguments = shared.DefaultArgs(item.Arguments)
 			// Merge consecutive function_call items into one
 			// assistant message so multi-call turns round-trip.
@@ -426,14 +430,15 @@ func responsesToChat(upstreamModel string, body []byte, ts *pluginapi.ThinkingSu
 		}
 	}
 
-	for _, t := range src.Tools {
-		if eErr := shared.FunctionTool(t.Type, EndpointPath); eErr != nil {
-			return nil, eErr
-		}
+	flatTools, eErr := shared.FlattenResponsesTools(src.Tools, EndpointPath)
+	if eErr != nil {
+		return nil, eErr
+	}
+	for _, t := range flatTools {
 		schema := shared.ObjectSchema(t.Parameters)
 		out.Tools = append(out.Tools, shared.CCTool{
 			Type:     "function",
-			Function: shared.CCFunction{Name: t.Name, Description: t.Description, Parameters: schema},
+			Function: shared.CCFunction{Name: t.QualifiedName(), Description: t.Description, Parameters: schema},
 		})
 	}
 	return encode(out), nil

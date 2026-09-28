@@ -729,3 +729,67 @@ func TestFromChatCompletionsEffortNoneDeclaredForwarded(t *testing.T) {
 		t.Fatalf("level-declared none = %v, want normalized forward", r)
 	}
 }
+
+func TestFromChatCompletionsNamespaceTools(t *testing.T) {
+	body := `{
+		"model": "pub/glm",
+		"messages": [
+			{
+				"role": "assistant",
+				"tool_calls": [
+					{
+						"id": "c1",
+						"type": "function",
+						"function": {
+							"name": "mcp__exa__search",
+							"arguments": "{}"
+						}
+					}
+				]
+			}
+		],
+		"tools": [
+			{
+				"type": "function",
+				"function": {
+					"name": "mcp__exa__search",
+					"description": "search web"
+				}
+			},
+			{
+				"type": "function",
+				"function": {
+					"name": "local_exec",
+					"description": "exec local"
+				}
+			}
+		]
+	}`
+	m := decodeReq(t, mustBuild(t, "m", "openai", []byte(body), nil))
+	tools, ok := m["tools"].([]any)
+	if !ok || len(tools) != 2 {
+		t.Fatalf("tools = %v", m["tools"])
+	}
+	t1 := tools[0].(map[string]any)
+	t2 := tools[1].(map[string]any)
+	if t1["type"] != "namespace" || t1["name"] != "mcp__exa" {
+		t.Fatalf("tool 0 mismatch: %v", t1)
+	}
+	children := t1["tools"].([]any)
+	if len(children) != 1 || children[0].(map[string]any)["name"] != "search" {
+		t.Fatalf("child tool mismatch: %v", children)
+	}
+	if t2["type"] != "function" || t2["name"] != "local_exec" {
+		t.Fatalf("tool 1 mismatch: %v", t2)
+	}
+
+	input := inputItems(t, m)
+	if len(input) != 1 {
+		t.Fatalf("input len = %d", len(input))
+	}
+	call := itemMap(t, input, 0)
+	if call["name"] != "search" || call["namespace"] != "mcp__exa" {
+		t.Fatalf("call item mismatch: %v", call)
+	}
+}
+

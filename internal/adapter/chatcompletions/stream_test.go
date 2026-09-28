@@ -835,6 +835,41 @@ func TestStreamResponsesCompletedOutputFunctionCall(t *testing.T) {
 	}
 }
 
+func TestStreamResponsesCompletedOutputFunctionCallNamespace(t *testing.T) {
+	sc := NewStreamConverter("openai-response")
+	evs := feedAll(t, sc,
+		`data: {"id":"r8","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"cc","function":{"name":"mcp__exa__web_search_exa","arguments":""}}]}}]}`,
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"query\":\"hello\"}"}}]}}]}`,
+		`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`,
+		`data: [DONE]`)
+	var added *sseEvt
+	var completed map[string]any
+	for _, e := range evs {
+		if e.Name == "response.output_item.added" {
+			ev := e
+			added = &ev
+		}
+		if e.Name == "response.completed" {
+			completed = e.Data["response"].(map[string]any)
+		}
+	}
+	if added == nil {
+		t.Fatal("missing response.output_item.added")
+	}
+	itemAdded := added.Data["item"].(map[string]any)
+	if itemAdded["name"] != "web_search_exa" || itemAdded["namespace"] != "mcp__exa" {
+		t.Fatalf("added item name/namespace mismatch: %v", itemAdded)
+	}
+	if completed == nil {
+		t.Fatal("missing response.completed")
+	}
+	output := completed["output"].([]any)
+	item := output[0].(map[string]any)
+	if item["name"] != "web_search_exa" || item["namespace"] != "mcp__exa" {
+		t.Fatalf("completed output name/namespace mismatch: %v", item)
+	}
+}
+
 // F1 pin (Messages-route invariant parity): when the upstream stream
 // announces delta.tool_calls BEFORE delta.content — legal Chat Completions
 // interleaving — response.completed.output must reproduce the streamed
